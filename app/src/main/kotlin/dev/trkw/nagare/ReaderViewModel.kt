@@ -43,6 +43,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Bumped on login and logout so responses from a previous session are dropped. */
     private var session = 0
+    /** Bumped per list request; only the latest one may apply its page or clear loading. */
+    private var listSeq = 0
     private var listJob: Job? = null
     private val pageSize = 50
 
@@ -99,6 +101,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun logout() {
         session++
+        listSeq++
         listJob?.cancel()
         store.token = null
         client = null
@@ -139,21 +142,23 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadEntries(more: Boolean = false) {
         val c = client ?: return
+        if (more && loading) return
         val current = session
-        if (!more) listJob?.cancel()
+        val seq = ++listSeq
+        listJob?.cancel()
         var query = EntryQuery.of(selection, unreadOnly).copy(limit = pageSize)
         if (more) entries.lastOrNull()?.let { query = query.copy(before = it.publishedAt, beforeId = it.id) }
         loading = true
         listJob = viewModelScope.launch {
             try {
                 val page = c.entries(query)
-                if (current != session) return@launch
+                if (current != session || seq != listSeq) return@launch
                 entries = if (more) entries + page else page
                 hasMore = page.size == pageSize
             } catch (e: Exception) {
-                if (current == session && e !is kotlinx.coroutines.CancellationException) report(e)
+                if (current == session && seq == listSeq && e !is kotlinx.coroutines.CancellationException) report(e)
             } finally {
-                if (current == session) loading = false
+                if (current == session && seq == listSeq) loading = false
             }
         }
     }
@@ -183,12 +188,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setRead(entry: Entry, read: Boolean) {
+        val c = client ?: return
+        val current = session
         patch(entry.id) { it.copy(read = if (read) 1 else 0) }
         adjustUnread(entry.feedId, if (read) -1 else 1)
         viewModelScope.launch {
             try {
-                client?.setState(listOf(entry.id), read = read)
+                c.setState(listOf(entry.id), read = read)
             } catch (e: Exception) {
+                // A failure from a previous session must not touch the new session's state.
+                if (current != session) return@launch
                 patch(entry.id) { it.copy(read = if (read) 0 else 1) }
                 adjustUnread(entry.feedId, if (read) 1 else -1)
                 report(e)
@@ -197,11 +206,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setStarred(entry: Entry, starred: Boolean) {
+        val c = client ?: return
+        val current = session
         patch(entry.id) { it.copy(starred = if (starred) 1 else 0) }
         viewModelScope.launch {
             try {
-                client?.setState(listOf(entry.id), starred = starred)
+                c.setState(listOf(entry.id), starred = starred)
             } catch (e: Exception) {
+                if (current != session) return@launch
                 patch(entry.id) { it.copy(starred = if (starred) 0 else 1) }
                 report(e)
             }

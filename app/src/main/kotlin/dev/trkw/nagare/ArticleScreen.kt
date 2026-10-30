@@ -224,7 +224,8 @@ class Speech(context: android.content.Context) {
     }.apply {
         setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onDone(id: String?) { speaking = false }
+            // Each chunk reports onDone; only the last one ends playback.
+            override fun onDone(id: String?) { if (id == "last") speaking = false }
             @Deprecated("Deprecated in Java")
             override fun onError(id: String?) { speaking = false }
         })
