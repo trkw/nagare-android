@@ -84,6 +84,10 @@ class ApiClient(
     suspend fun watchPage(url: String): Feed =
         post("/web-feeds", FeedResult.serializer(), buildJsonObject { put("url", url) }).feed
 
+    /** Turns new-entry notifications for one feed on or off. */
+    suspend fun setNotify(feedId: Int, on: Boolean): Feed =
+        post("/feeds/$feedId", Feed.serializer(), buildJsonObject { put("notify", on) }, method = "PATCH")
+
     suspend fun unsubscribe(feedId: Int) {
         send("DELETE", url("/feeds/$feedId"))
     }
@@ -120,6 +124,10 @@ class ApiClient(
             put("token", fcmToken)
             put("name", name)
         })
+    }
+
+    suspend fun unregisterPush(fcmToken: String) {
+        send("DELETE", url("/push/targets"), buildJsonObject { put("token", fcmToken) })
     }
 
     companion object {

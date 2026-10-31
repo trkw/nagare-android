@@ -35,3 +35,16 @@ Android Studio でこのフォルダを開いて実行します。コマンド�
 # trkw/nagare の apps/api で
 bun run token:create --name android --kind app --remote
 ```
+
+## 通知（FCM）
+
+1. [Firebase コンソール](https://console.firebase.google.com/)でプロジェクトを作り、パッケージ名 `dev.trkw.nagare` の Android アプリを追加します。
+2. ダウンロードした `google-services.json` を `app/` に置きます（git には入りません）。ファイルがなければ通知の項目が出ないだけで、アプリは普通にビルドできます。
+3. サーバー側（trkw/nagare）には、プロジェクトの設定 → サービスアカウントで作った秘密鍵の JSON を登録します。
+
+   ```sh
+   # apps/api で
+   bunx wrangler secret put FCM_SERVICE_ACCOUNT   # JSONの中身をそのまま貼る
+   ```
+
+アプリではドロワーの「このデバイスで通知を受け取る」で端末を登録し、フィードを選んでから「選択中のフィードの新着を通知する」で通知するフィードを選びます。
