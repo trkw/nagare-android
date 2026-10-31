@@ -284,8 +284,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         registerPush()
     }
 
-    /** Removes this device from the server. keepPreference re-registers on the next login. */
+    /** Bumped when notifications are turned off or the account logs out, so a registration in flight is undone. */
+    private var pushGen = 0
+
+    /**
+     * Removes this device from the server and deletes its FCM token, so even if the server call fails
+     * (offline at logout), FCM rejects further sends and the server drops the target.
+     * keepPreference re-registers on the next login.
+     */
     fun disablePush(keepPreference: Boolean = false) {
+        pushGen++
         val c = client
         val token = store.pushToken
         if (!keepPreference) {
@@ -293,10 +301,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             pushEnabled = false
         }
         store.pushToken = null
-        if (c == null || token == null) return
+        if (!Push.available) return
         viewModelScope.launch {
-            runCatching { c.unregisterPush(token) }
-            if (!keepPreference && Push.available) runCatching { Push.deleteToken() }
+            if (c != null && token != null) runCatching { c.unregisterPush(token) }
+            runCatching { Push.deleteToken() }
         }
     }
 
@@ -304,13 +312,19 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val c = client ?: return
         if (!Push.available) return
         val current = session
+        val gen = pushGen
         viewModelScope.launch {
             try {
                 val token = Push.token()
                 c.registerPush(token, Push.deviceName)
-                if (current == session) store.pushToken = token
+                if (gen != pushGen || current != session) {
+                    // Turned off or logged out while this was in flight.
+                    runCatching { c.unregisterPush(token) }
+                    return@launch
+                }
+                store.pushToken = token
             } catch (e: Exception) {
-                if (current == session) report(e)
+                if (gen == pushGen && current == session) report(e)
             }
         }
     }

@@ -1,6 +1,7 @@
 package dev.trkw.nagare
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -37,6 +38,12 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra(Push.EXTRA_ENTRY_ID)?.toIntOrNull()?.let { id ->
             intent.removeExtra(Push.EXTRA_ENTRY_ID)
             model.openById(id)
+            return
+        }
+        // A URL-only notification (an agent's notify) tapped while the app was in the background.
+        intent.getStringExtra("url")?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let { url ->
+            intent.removeExtra("url")
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
             return
         }
         if (intent.action != Intent.ACTION_SEND) return
