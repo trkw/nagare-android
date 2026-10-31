@@ -24,11 +24,13 @@ class ApiClientTest {
                 "/api/feeds" -> 200 to """[{"id":1,"kind":"web","url":"https://e.com/news","title":"","folder":"見張り","added_by":"grokbot","notify":1,"unread":3,"extra":true}]"""
                 "/api/entries" -> 200 to """[{"id":7,"feed_id":1,"feed_title":"F","url":null,"title":"","author":null,"published_at":1793332858894,"read":0,"starred":1}]"""
                 "/api/entries/state" -> 200 to """{"updated":1}"""
+                "/api/feeds/1" -> 200 to """{"id":1,"kind":"rss","url":"https://e.com/feed","title":"E","notify":1,"unread":0}"""
+                "/api/push/targets" -> if (ex.requestMethod == "DELETE") 204 to "" else 201 to """{"id":3,"platform":"fcm"}"""
                 "/api/entries/7/translate" -> 200 to """{"title":"題","content":"<p>本文</p>","engine":"x","cached":false}"""
                 else -> 403 to """{"error":"token lacks the \"write\" scope"}"""
             }
             val bytes = response.encodeToByteArray()
-            ex.sendResponseHeaders(status, bytes.size.toLong())
+            ex.sendResponseHeaders(status, if (bytes.isEmpty()) -1 else bytes.size.toLong())
             ex.responseBody.use { it.write(bytes) }
         }
         server.start()
@@ -58,6 +60,18 @@ class ApiClientTest {
         assertEquals("""{"ids":[7,8],"read":true}""", requests[0].third)
         assertEquals("題", client().translate(7).title)
         assertEquals("POST /api/entries/7/translate?lang=ja", requests[1].first)
+    }
+
+    @Test
+    fun pushAndNotify() = runTest {
+        assertTrue(client().setNotify(1, true).notify == 1)
+        assertEquals("PATCH /api/feeds/1", requests[0].first)
+        assertEquals("""{"notify":true}""", requests[0].third)
+        client().registerPush("tok", "Pixel")
+        assertEquals("""{"platform":"fcm","token":"tok","name":"Pixel"}""", requests[1].third)
+        client().unregisterPush("tok")
+        assertEquals("DELETE /api/push/targets", requests[2].first)
+        assertEquals("""{"token":"tok"}""", requests[2].third)
     }
 
     @Test

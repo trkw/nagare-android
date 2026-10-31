@@ -1,6 +1,8 @@
 package dev.trkw.nagare
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -37,6 +39,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,11 +54,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.Manifest
+import android.os.Build
 import android.text.format.DateUtils
 import dev.trkw.nagare.core.Entry
 import dev.trkw.nagare.core.Feed
@@ -164,6 +170,7 @@ private fun FeedDrawer(model: ReaderViewModel, onSelect: (Selection) -> Unit) {
                     Text("Nagare", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                     TextButton(onClick = model::logout) { Text("ログアウト") }
                 }
+                if (Push.available) PushSwitch(model)
                 DrawerRow("すべて", model.totalUnread, model.selection == Selection.All) { onSelect(Selection.All) }
                 DrawerRow("あとで読む", 0, model.selection == Selection.Starred) { onSelect(Selection.Starred) }
             }
@@ -200,7 +207,13 @@ private fun FeedDrawer(model: ReaderViewModel, onSelect: (Selection) -> Unit) {
                 }
             }
             item {
-                TextButton(onClick = { model.selection.let { s -> if (s is Selection.OneFeed) confirm = model.feeds.firstOrNull { it.id == s.id } } }) {
+                val selected = (model.selection as? Selection.OneFeed)?.let { s -> model.feeds.firstOrNull { it.id == s.id } }
+                if (selected != null) {
+                    TextButton(onClick = { model.setNotify(selected, selected.notify == 0) }) {
+                        Text(if (selected.notify == 0) "選択中のフィードの新着を通知する" else "選択中のフィードの通知をやめる")
+                    }
+                }
+                TextButton(onClick = { confirm = selected }) {
                     Text("選択中のフィードの購読をやめる")
                 }
             }
@@ -212,6 +225,28 @@ private fun FeedDrawer(model: ReaderViewModel, onSelect: (Selection) -> Unit) {
             confirmButton = { TextButton(onClick = { model.unsubscribe(feed); confirm = null }) { Text("やめる") } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("キャンセル") } },
             text = { Text("「${feed.displayTitle}」の購読をやめますか？") },
+        )
+    }
+}
+
+@Composable
+private fun PushSwitch(model: ReaderViewModel) {
+    val context = LocalContext.current
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) model.enablePush() else model.error = "通知が許可されていません。設定アプリで Nagare の通知をオンにしてください。"
+    }
+    Row(Modifier.padding(16.dp, 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("このデバイスで通知を受け取る", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Switch(
+            checked = model.pushEnabled,
+            onCheckedChange = { on ->
+                when {
+                    !on -> model.disablePush()
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && Push.needsPermission(context) ->
+                        permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    else -> model.enablePush()
+                }
+            },
         )
     }
 }

@@ -1,6 +1,7 @@
 package dev.trkw.nagare
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,7 +18,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handle(intent)
+        // On recreation (rotation) the launch intent comes back unchanged, so handle it only once.
+        if (savedInstanceState == null) handle(intent)
         setContent {
             NagareTheme {
                 NagareApp(model, sharedUrl.value, onSharedUrlUsed = { sharedUrl.value = null })
@@ -31,7 +33,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handle(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_SEND) return
+        if (intent == null) return
+        // A notification tap: our own intent, or FCM's when it showed the notification in the background.
+        intent.getStringExtra(Push.EXTRA_ENTRY_ID)?.toIntOrNull()?.let { id ->
+            intent.removeExtra(Push.EXTRA_ENTRY_ID)
+            model.openById(id)
+            return
+        }
+        // A URL-only notification (an agent's notify) tapped while the app was in the background.
+        intent.getStringExtra("url")?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let { url ->
+            intent.removeExtra("url")
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            return
+        }
+        if (intent.action != Intent.ACTION_SEND) return
         val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
         sharedUrl.value = Regex("https?://\\S+").find(text)?.value
     }

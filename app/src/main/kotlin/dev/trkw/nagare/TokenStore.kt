@@ -22,6 +22,16 @@ class TokenStore(context: Context) {
         get() = prefs.getString("token", null)?.let { runCatching { decrypt(it) }.getOrNull() }
         set(value) = prefs.edit().putString("token", value?.let(::encrypt)).apply()
 
+    /** Whether the user turned on notifications on this device. */
+    var pushEnabled: Boolean
+        get() = prefs.getBoolean("push_enabled", false)
+        set(value) = prefs.edit().putBoolean("push_enabled", value).apply()
+
+    /** The FCM token last registered with the server. */
+    var pushToken: String?
+        get() = prefs.getString("push_token", null)
+        set(value) = prefs.edit().putString("push_token", value).apply()
+
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }

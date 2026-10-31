@@ -40,6 +40,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     var loading by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
+    var pushEnabled by mutableStateOf(store.pushEnabled)
+        private set
 
     /** Bumped on login and logout so responses from a previous session are dropped. */
     private var session = 0
@@ -48,7 +50,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var listJob: Job? = null
     private val pageSize = 50
 
-    val openEntry: Entry? get() = openEntryId?.let { id -> entries.firstOrNull { it.id == id } }
+    /** An entry opened from outside the list (a notification), kept so a list reload does not close it. */
+    private var detached by mutableStateOf<Entry?>(null)
+
+    val openEntry: Entry?
+        get() = openEntryId?.let { id -> entries.firstOrNull { it.id == id } ?: detached?.takeIf { it.id == id } }
 
     val folders: List<Pair<String?, List<Feed>>>
         get() = feeds.groupBy { it.folder }
@@ -72,6 +78,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         if (server != null && token != null) {
             client = ApiClient(server, token)
             reload()
+            // FCM tokens can change, so register again on every launch once the user opted in.
+            if (store.pushEnabled) registerPush()
         }
     }
 
@@ -91,6 +99,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 session++
                 client = candidate
                 reload()
+                if (store.pushEnabled) registerPush()
             } catch (e: Exception) {
                 report(e)
             } finally {
@@ -100,6 +109,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun logout() {
+        disablePush(keepPreference = true)
         session++
         listSeq++
         listJob?.cancel()
@@ -108,6 +118,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         me = null
         feeds = emptyList()
         entries = emptyList()
+        detached = null
         openEntryId = null
     }
 
@@ -185,6 +196,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun patch(id: Int, change: (Entry) -> Entry) {
         entries = entries.map { if (it.id == id) change(it) else it }
+        detached = detached?.let { if (it.id == id) change(it) else it }
     }
 
     fun setRead(entry: Entry, read: Boolean) {
@@ -260,6 +272,89 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 refreshFeeds()
             } catch (e: Exception) {
                 report(e)
+            }
+        }
+    }
+
+    /** Call after the notification permission was granted (or is not needed). */
+    fun enablePush() {
+        if (!Push.available) return
+        store.pushEnabled = true
+        pushEnabled = true
+        registerPush()
+    }
+
+    /** Bumped when notifications are turned off or the account logs out, so a registration in flight is undone. */
+    private var pushGen = 0
+
+    /**
+     * Removes this device from the server and deletes its FCM token, so even if the server call fails
+     * (offline at logout), FCM rejects further sends and the server drops the target.
+     * keepPreference re-registers on the next login.
+     */
+    fun disablePush(keepPreference: Boolean = false) {
+        pushGen++
+        val c = client
+        val token = store.pushToken
+        if (!keepPreference) {
+            store.pushEnabled = false
+            pushEnabled = false
+        }
+        store.pushToken = null
+        if (!Push.available) return
+        viewModelScope.launch {
+            if (c != null && token != null) runCatching { c.unregisterPush(token) }
+            runCatching { Push.deleteToken() }
+        }
+    }
+
+    private fun registerPush() {
+        val c = client ?: return
+        if (!Push.available) return
+        val current = session
+        val gen = pushGen
+        viewModelScope.launch {
+            try {
+                val token = Push.token()
+                c.registerPush(token, Push.deviceName)
+                if (gen != pushGen || current != session) {
+                    // Turned off or logged out while this was in flight.
+                    runCatching { c.unregisterPush(token) }
+                    return@launch
+                }
+                store.pushToken = token
+            } catch (e: Exception) {
+                if (gen == pushGen && current == session) report(e)
+            }
+        }
+    }
+
+    fun setNotify(feed: Feed, on: Boolean) {
+        val c = client ?: return
+        val current = session
+        viewModelScope.launch {
+            try {
+                val updated = c.setNotify(feed.id, on)
+                if (current == session) feeds = feeds.map { if (it.id == feed.id) updated else it }
+            } catch (e: Exception) {
+                if (current == session) report(e)
+            }
+        }
+    }
+
+    /** Opens an entry that may not be in the current list, such as one from a notification. */
+    fun openById(id: Int) {
+        entries.firstOrNull { it.id == id }?.let { return open(it) }
+        val c = client ?: return
+        val current = session
+        viewModelScope.launch {
+            try {
+                val entry = c.entry(id)
+                if (current != session) return@launch
+                detached = entry
+                open(entry)
+            } catch (e: Exception) {
+                if (current == session) report(e)
             }
         }
     }
